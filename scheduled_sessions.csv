@@ -1,0 +1,8 @@
+name,session_day,start_time,end_time
+Client1,Monday,17:00,18:00
+Client1,Wednesday,17:00,18:00
+Client2,Monday,18:00,19:00
+Client4,Tuesday,17:00,18:00
+Client4,Wednesday,18:00,19:00
+Client5,Thursday,06:00,07:00
+Client5,Saturday,06:00,07:00
