@@ -1,48 +1,122 @@
-# 🗓️ AI-Powered Client Appointment Scheduler
-This project demonstrates how to build an **AI-assisted appointment scheduling system** using:
-- **OpenAI GPT-4.1-nano**
-- **Function calling for structured output**
-- **Pandas** for CSV handling
-- **Python** for workflow automation
+# OpenAI Session Scheduler
 
-The script reads client availability from a CSV file, considers trainer constraints, and generates a weekly appointment schedule without time conflicts.
+An LLM-powered weekly session scheduler for personal trainers. Given a trainer's availability and client requests, it produces a conflict-free schedule — with automatic conflict detection and self-reflection if the model makes a mistake.
 
----
+## How it works
 
-## 📌 Features
-- Reads **client availability** from `availability.csv`
-- Defines **trainer availability rules** as part of system prompt
-- Uses OpenAI's **function calling** for consistent structured output
-- Exports results to `scheduled_sessions.csv`
+1. Trainer availability and client requests are loaded from CSV
+2. A scheduling prompt is sent to `gpt-4o-mini` via LangChain
+3. The output is parsed and checked for double-bookings deterministically
+4. If a conflict is found, the LLM is re-invoked with a reflection prompt to fix it
+5. The corrected schedule is coerced into a validated Pydantic model and saved to CSV
 
----
+## Tech Stack
 
-## 🏛️ Architectural Decisions
+| Layer | Tool |
+|---|---|
+| LLM | OpenAI `gpt-4o-mini` |
+| Orchestration | LangChain |
+| Structured output | Pydantic v2 |
+| Observability | LangSmith (tracing, datasets, evaluations, prompt hub) |
+| Data | pandas |
 
-### 1. CSV as the Data Layer
-Rather than using a database or live calendar API, this solution intentionally uses **processed data in CSV format** as its input layer. This keeps the project lightweight, portable, and easy to inspect or modify without additional infrastructure. The `availability.csv` file acts as a clean, pre-processed snapshot of client availability that the LLM can reason over reliably.
+## Project Structure
 
-### 2. System Prompt as the Rule Engine
-Trainer availability and scheduling constraints are defined directly in the **system prompt** rather than hard-coded in application logic. This is a deliberate architectural choice — it keeps the rules human-readable, easy to update, and decoupled from the code itself. Changing a trainer's working hours or break windows requires no code changes, just a prompt edit.
-
-### 3. Structured Output via Function Calling
-OpenAI's **function calling** feature is used to enforce a consistent, parseable output schema from the model. This avoids brittle text parsing and ensures the generated schedule can be reliably written to CSV regardless of how the model phrases its response.
-
-### 4. Reflection + LLM-as-Judge for Evaluation
-A **reflection-based evaluation** pattern is used to validate the generated schedule. After the initial schedule is produced, a second LLM call acts as an **independent judge**, reviewing the output for:
-- **Time conflicts** — overlapping appointments for the same trainer or client
-- **Missing sessions** — required clients who were not scheduled
-
-This self-critique loop improves output quality without requiring ground truth labels or manual review, making it a practical evaluation strategy for generative scheduling tasks.
-
----
-
-## 🛠️ Requirements
-
-Install dependencies:
-```bash
-pip install openai python-dotenv pandas
+```
+OpenAI_Session_Scheduler/
+├── config.py               # Model settings, file paths, LLM client factory
+├── models.py               # Pydantic schemas: Session, Schedule
+├── data_loader.py          # Loads trainer slots + client availability CSV
+├── prompts.py              # Scheduling and reflection prompt templates
+├── conflict.py             # Parses LLM output, detects scheduling conflicts
+├── scheduling_chain.py     # LangChain pipeline: prompt → LLM → reflect → structured output
+├── main.py                 # Entry point
+├── evaluate.py             # LangSmith evaluation runner (run separately)
+├── evaluators.py           # Custom evaluator functions
+├── utils.py                # available_slot_generator, print_reasoning
+├── availability.csv        # Client availability input
+└── scheduled_sessions.csv  # Generated schedule output
 ```
 
-## Want to try?
-- Use your own OpenAI API Key
+## Observability with LangSmith
+
+Every run is fully traced in LangSmith — prompts, token usage, latency, and whether the reflection step fired.
+
+**Evaluators** run against a saved dataset of real runs:
+
+| Evaluator | What it checks |
+|---|---|
+| `no_conflict_evaluator` | No two sessions share the same day and start time |
+| `session_count_evaluator` | Output contains at least one scheduled session |
+
+**Prompt versioning** — the scheduling prompt is stored and versioned in LangSmith Prompt Hub. Pull the latest version at runtime:
+```python
+scheduling_prompt = Client().pull_prompt("scheduler-prompt")
+```
+
+Run evals independently of production:
+```bash
+python evaluate.py   # scores all dataset examples
+python main.py       # production run only
+```
+
+## Setup
+
+**1. Clone and install dependencies**
+```bash
+git clone https://github.com/your-username/OpenAI_Session_Scheduler.git
+cd OpenAI_Session_Scheduler
+pip install -r requirements.txt
+```
+
+**2. Configure environment**
+
+Create a `.env` file in the project root:
+```
+# OpenAI
+OPENAI_API_KEY=sk-your-openai-key-here
+
+# LangSmith
+LANGCHAIN_TRACING=true
+LANGCHAIN_API_KEY=lsv2_pt_your-langsmith-key-here
+LANGCHAIN_PROJECT=scheduler-assistant
+LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com
+```
+
+> Remove `LANGSMITH_ENDPOINT` if you are on the US region.
+
+**3. Add client availability**
+
+Populate `availability.csv` with client requests:
+```
+name,day,time,sessions
+Alice,Monday,Morning,2
+Bob,Tuesday,Evening,3
+```
+
+**4. Run**
+```bash
+python main.py
+```
+
+Output is written to `scheduled_sessions.csv`.
+
+## Requirements
+
+```
+langchain
+langchain-openai
+langchain-core
+langsmith
+pydantic
+pandas
+python-dotenv
+```
+
+## Design notes
+
+- Implement reasoning and output formatting as individual steps in the chain utilizing Langchain framework. To offload formatting from LLM's thinking loop and ensure focus on scheduling without conflict
+- Define output format in pydantic model rather than descriptive function call for reuse of the structure
+- Perform deterministic conflict check to avoid reflection call to LLM if no conflict found
+- Version controlled scheduling prompt to avoid code changes for prompt development and capability to rollback prompt changes when evaluation fails
+- Langsmith Observability implemented to track accuracy, token usage and maintain example datasets

@@ -2,3 +2,4 @@
 .idea
 _pycache__
 .venv
+scheduled_sessions*
